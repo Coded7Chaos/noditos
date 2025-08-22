@@ -1,5 +1,6 @@
 package com.example.noditos
 
+import android.R
 import android.graphics.drawable.Icon
 import android.os.Bundle
 import android.util.Log
@@ -60,6 +61,10 @@ import androidx.navigation.compose.NavHost
 import androidx.xr.scenecore.Component
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -128,7 +133,19 @@ fun GenericScreen(nombre: String){
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun Pizarra(nombre: String) {
-    val nodosPositions = remember { mutableStateListOf<Pair<Float, Float>>() }
+    data class Nodo(
+        val id: Int,
+        val title: String,
+        var position: Offset
+    )
+
+    val nodos = remember { mutableStateListOf<Nodo>() }
+    var nextId = 0
+
+    fun addNodo(position: Offset){
+        nodos.add(Nodo(id = ++nextId,title = nextId.toString(), position = position))
+    }
+
     val density = LocalDensity.current
     var selectedNodeIndex by remember { mutableIntStateOf(-1) }
     var isDragging by remember { mutableStateOf(false) }
@@ -146,14 +163,14 @@ fun Pizarra(nombre: String) {
                 .pointerInput(Unit) {
                     detectTapGestures { offset ->
                         val minDistance = 30f
-                        val isOverlapping = nodosPositions.any { pos ->
-                            val dx = pos.first - offset.x
-                            val dy = pos.second - offset.y
+                        val isOverlapping = nodos.any { nodo ->
+                            val dx = nodo.position.x - offset.x
+                            val dy = nodo.position.y - offset.y
                             val distance = kotlin.math.sqrt(dx * dx + dy * dy)
                             distance < minDistance
                         }
                         if (!isOverlapping) {
-                            nodosPositions.add(Pair(offset.x, offset.y))
+                            addNodo(offset)
                             Log.d(
                                 "Click en la pizarra",
                                 "Nuevo nodo anadido en ${offset.x} ,${offset.x}"
@@ -167,31 +184,76 @@ fun Pizarra(nombre: String) {
             ) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     connections.forEach { (fromIndex, toIndex) ->
-                        val from = nodosPositions[fromIndex]
-                        val to = nodosPositions[toIndex]
+                        val from = nodos[fromIndex].position
+                        val to = nodos[toIndex].position
+                        val radius = (24/2).dp.toPx()
 
-                        drawLine(
+                        //direccion normalizada
+                        val dx = to.x - from.x
+                        val dy = to.y - from.y
+                        val dist = sqrt(dx*dx + dy*dy)
+                        val dirX = dx / dist
+                        val dirY = dy / dist
+
+
+                        //Bordes de los nodos
+                        val startX = from.x + dirX * radius
+                        val startY = from.y + dirY * radius
+                        val endX = to.x - dirX * radius
+                        val endY = to.y - dirY * radius
+
+                        //Punto de control
+                        val midX = (startX + endX) / 2f
+                        val midY = (startY + endY) / 2f
+                        val offset = if(fromIndex>toIndex) 150f else -150f
+                        val controlX = midX + offset
+                        val controlY = midY
+
+                        //dibujo de curva
+                        val path = Path().apply {
+                            moveTo(startX, startY)
+                            quadraticBezierTo(
+                                controlX,
+                                controlY,
+                                endX,
+                                endY
+                            )
+                        }
+                        drawPath(
+                            path = path,
                             color = Color.Black,
-                            start = Offset(from.first, from.second),
-                            end = Offset(to.first, to.second),
-                            strokeWidth = 5f
+                            style = Stroke(width = 5f)
                         )
+                        val dxArrow = endX - controlX
+                        val dyArrow = endY - controlY
+                        //dibujando la punta de la flecha
+                        val angle = atan2(dyArrow,dxArrow)
+                        val arrowSize = 40f
+                        val arrowAngle = Math.PI / 6
+                        val x1 = endX - arrowSize * cos(angle - arrowAngle).toFloat()
+                        val y1 = endY - arrowSize * sin(angle - arrowAngle).toFloat()
+                        val x2 = endX - arrowSize * cos(angle + arrowAngle).toFloat()
+                        val y2 = endY - arrowSize * sin(angle + arrowAngle).toFloat()
+
+                        drawLine(Color.Black, Offset(endX, endY), Offset(x1, y1), strokeWidth = 6f)
+                        drawLine(Color.Black, Offset(endX, endY), Offset(x2, y2), strokeWidth = 6f)
 
                     }
                 }
             }
+
             //Dibujar los noditos almacenados
-            nodosPositions.forEachIndexed { index, position ->
+            nodos.forEach { nodo ->
 
                 Log.d(
                     "Dibujando en la pizarra",
-                    "Nuevo nodo añadido en ${position.first} ,${position.second}"
+                    "Nuevo nodo añadido en ${nodo.position.x} ,${nodo.position.y}"
                 )
 
                 val circleColor: Color
                 val circleSize: Int
                 val circleOffset: Int
-                if (index != selectedNodeIndex) {
+                if (nodo.id != selectedNodeIndex) {
                     circleColor = Color(153, 217, 234)
                     circleSize = 24
                     circleOffset = -12
@@ -205,21 +267,21 @@ fun Pizarra(nombre: String) {
                 val redZoneHeight = 80.dp
                 val redZoneHeightPx = with(density) { redZoneHeight.toPx() }
 
-
+                //Componente que se ve como el círculo del nodo
                 Box(
                     modifier = Modifier
                         .offset(
-                            with(density) { nodosPositions[index].first.toDp() },
-                            with(density) { nodosPositions[index].second.toDp() })
+                            with(density) { nodo.position.x.toDp() },
+                            with(density) { nodo.position.y.toDp() })
                         .offset(circleOffset.dp, circleOffset.dp)
                         .size(circleSize.dp)
                         .background(circleColor, CircleShape)
                         .clickable {
                             if (selectedNodeIndex == -1) {
-                                selectedNodeIndex = index
+                                selectedNodeIndex = nodo.id
                             } else {
-                                if (!connections.contains(Pair(selectedNodeIndex, index))) {
-                                    connections.add(Pair(selectedNodeIndex, index))
+                                if (!connections.contains(Pair(selectedNodeIndex, nodo.id))) {
+                                    connections.add(Pair(selectedNodeIndex, nodo.id))
                                 }
                                 selectedNodeIndex = -1
                             }
@@ -229,14 +291,19 @@ fun Pizarra(nombre: String) {
                                 onDragStart = { isDragging = true },
                                 onDrag = { change, dragAmount ->
                                     change.consume()
-                                    val newX = nodosPositions[index].first + dragAmount.x
-                                    val newY = nodosPositions[index].second + dragAmount.y
-                                    nodosPositions[index] = Pair(newX, newY)
+                                    val newX = nodo.position.x + dragAmount.x
+                                    val newY = nodo.position.y + dragAmount.y
+                                    nodo.position = Offset(newX, newY)
                                     //verificacion de la posicion del nodo
                                     isOverTrash = newY + 60f > (screenHeight - redZoneHeightPx)
                                 },
                                 onDragEnd = {
-                                    if (isOverTrash) nodosPositions.removeAt(index)
+                                    if (isOverTrash){
+                                        nodos.removeAt(nodo.id)
+                                        connections.removeAll{ (from, to) ->
+                                            (from == nodo.id || to == nodo.id)
+                                        }
+                                    }
                                     isDragging = false
                                     isOverTrash = false
                                 }
@@ -245,7 +312,7 @@ fun Pizarra(nombre: String) {
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = (index + 1).toString(),
+                        text = nodo.title,
                         color = Color.White,
                         fontWeight = FontWeight.Bold
                     )
@@ -279,62 +346,4 @@ fun Pizarra(nombre: String) {
 
     }
 }
-    //ejemplito nomas
-
-    @Composable
-    fun CurvedArrowExample() {
-        val nodosPositions = remember {
-            mutableStateListOf(
-                Offset(200f, 300f),
-                Offset(600f, 500f)
-            )
-        }
-        var draggingIndex by remember { mutableStateOf<Int?>(null) }
-        Box(Modifier.fillMaxSize()) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val from = nodosPositions[0]
-                val to = nodosPositions[1]
-                val midX = (from.x + to.x) / 2f
-                val midY = (from.y + to.y) / 2f
-                // Control point (desplazado a la derecha para que siempre curve)
-                val controlX = midX + 150f
-                val controlY = midY
-
-                val path = Path().apply {
-                    moveTo(from.x, from.y)
-                    quadraticBezierTo(controlX, controlY, to.x, to.y)
-                }
-
-                drawPath(
-                    path = path,
-                    color = Color.Black,
-                    style = Stroke(width = 5f)
-                )
-            }
-
-                // Dibujar nodos
-                nodosPositions.forEachIndexed { index, position ->
-                    Box(
-                        modifier = Modifier
-                            .offset { IntOffset(position.x.toInt(), position.y.toInt()) }
-                            .size(60.dp)
-                            .background(if (index == 0) Color.Blue else Color.Green, CircleShape)
-                            .pointerInput(Unit) {
-                                detectDragGestures(
-                                    onDragStart = { draggingIndex = index },
-                                    onDrag = { change, dragAmount ->
-                                        change.consume()
-                                        nodosPositions[index] =
-                                            nodosPositions[index] + Offset(
-                                                dragAmount.x,
-                                                dragAmount.y
-                                            )
-                                    },
-                                    onDragEnd = { draggingIndex = null }
-                                )
-                            }
-                    )
-                }
-            }
-        }
 
